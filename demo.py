@@ -7,7 +7,7 @@ from scipy.io import loadmat
 from scipy.io import savemat
 from torch import optim
 from torch.autograd import Variable
-from vit_pytorch_indian_Houston import ViT   #根据不同的数据集调用不同的网络结构
+
 from sklearn.metrics import confusion_matrix
 
 import matplotlib.pyplot as plt
@@ -33,6 +33,11 @@ parser.add_argument('--gamma', type=float, default=0.9, help='gamma')
 parser.add_argument('--weight_decay', type=float, default=0, help='weight_decay')
 parser.add_argument('--channels_band', type=int, default=0, help='channels_band')
 args = parser.parse_args()
+
+if args.dataset == 'Pavia':
+    from vit_pytorch_pavia import ViT
+else:
+    from vit_pytorch_indian_Houston import ViT
 
 os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
 #-------------------------------------------------------------------------------

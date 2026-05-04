@@ -25,8 +25,25 @@ from sklearn.metrics import confusion_matrix
 
 def _default_colormap(num_classes):
     """Generate a discrete colormap for *num_classes* + 1 (background)."""
-    cmap = plt.cm.get_cmap("tab20", num_classes + 1)
-    return [cmap(i) for i in range(num_classes + 1)]
+    # Combine multiple qualitative colormaps for >20 classes
+    cmaps = ["tab20", "tab20b", "tab20c", "Set1", "Set2", "Set3", "Pastel1", "Pastel2", "Dark2", "Accent"]
+    colors_list = []
+    for cmap_name in cmaps:
+        try:
+            cmap = plt.cm.get_cmap(cmap_name)
+            n = cmap.N
+            for i in range(n):
+                colors_list.append(cmap(i))
+        except ValueError:
+            continue
+        if len(colors_list) >= num_classes + 1:
+            break
+    # If still not enough, fill remaining with hsv cycling
+    if len(colors_list) < num_classes + 1:
+        hsv = plt.cm.get_cmap("hsv", num_classes + 1 - len(colors_list) + 1)
+        for i in range(num_classes + 1 - len(colors_list)):
+            colors_list.append(hsv(i))
+    return colors_list[:num_classes + 1]
 
 
 def _load_colormap(path, num_classes):

@@ -1,66 +1,105 @@
+import os
 import numpy as np
 from scipy.io import loadmat
 
 
-def load_hyperspectral_data(data_path, gt_path):
+def _read_envi_hdr(hdr_path):
     """
-    Load hyperspectral image and ground truth from separate .mat files.
-    Auto-detects variable names by shape.
+    Parse an ENVI .hdr file to extract metadata (lines, samples, bands, dtype, interleave).
 
-    Returns:
-        input_img: (H, W, C) hyperspectral image array
-        gt: (H, W) ground truth label array
-        num_classes: int, number of classes in gt
+    Returns a dict with keys: lines, samples, bands, dtype, interleave, offset.
     """
+    meta = {}
+    with open(hdr_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if '=' in line:
+                key, val = line.split('=', 1)
+                key = key.strip().lower()
+                val = val.strip()
+                # Remove trailing braces/comments
+                if '{' in val:
+                    val = val[val.find('{') + 1:val.find('}')]
+                meta[key] = val
+
+    # Parse shape
+    meta['lines']   = int(meta.get('lines', 0))
+    meta['samples'] = int(meta.get('samples', 0))
+    meta['bands']   = int(meta.get('bands', 0))
+    meta['header_offset'] = int(meta.get('header offset', '0'))
+    meta['interleave'] = meta.get('interleave', 'bsq').lower()
+
+    # Data type mapping (ENVI dtype code -> numpy)
+    dtype_map = {
+        '1': np.uint8,
+        '2': np.int16,
+        '3': np.int32,
+        '4': np.float32,
+        '5': np.float64,
+        '12': np.uint16,
+        '13': np.uint32,
+        '14': np.int64,
+        '15': np.uint64,
+    }
+    dtype_code = meta.get('data type', '4')
+    meta['dtype'] = dtype_map.get(str(dtype_code), np.float32)
+    return meta
+
+
+def _load_envi_dat(dat_path):
+    """
+    Load an ENVI format .dat file (with a sibling .hdr).
+
+    Returns a numpy array of shape (H, W, C).
+    """
+    base, _ = os.path.splitext(dat_path)
+    hdr_path = base + '.hdr'
+    if not os.path.exists(hdr_path):
+        raise FileNotFoundError(f"ENVI header not found: {hdr_path}")
+
+    meta = _read_envi_hdr(hdr_path)
+    H, W, C = meta['lines'], meta['samples'], meta['bands']
+    dtype = meta['dtype']
+    offset = meta['header_offset']
+    interleave = meta['interleave']
+
+    data = np.fromfile(dat_path, dtype=dtype, offset=offset)
+
+    if interleave == 'bsq':
+        # (C, H, W)
+        data = data.reshape((C, H, W))
+        data = np.transpose(data, (1, 2, 0))
+    elif interleave == 'bil':
+        # (H, W, C) but stored band-interleaved by line
+        data = data.reshape((H, C, W))
+        data = np.transpose(data, (0, 2, 1))
+    elif interleave == 'bip':
+        # (H, W, C) band-interleaved by pixel
+        data = data.reshape((H, W, C))
+    else:
+        raise ValueError(f"Unsupported ENVI interleave: {interleave}")
+
+    return data
+
+
+def _load_mat(data_path):
+    """Load a .mat hyperspectral data cube, returning (H, W, C) array."""
     data_mat = loadmat(data_path)
-    gt_mat = loadmat(gt_path)
 
     def _is_variable(key):
         return not key.startswith("__")
 
     data_keys = [k for k in data_mat if _is_variable(k)]
-    gt_keys = [k for k in gt_mat if _is_variable(k)]
-
     if len(data_keys) == 0:
         raise ValueError(f"No data variable found in {data_path}")
-    if len(gt_keys) == 0:
-        raise ValueError(f"No gt variable found in {gt_path}")
 
-    # Find GT variable (2D array) first
-    gt_var = None
-    for k in gt_keys:
-        arr = np.array(gt_mat[k])
-        if arr.ndim == 2:
-            gt_var = arr
-            break
-    if gt_var is None:
-        raise ValueError(f"Could not find 2D ground truth array in {gt_path}")
-
-    gt = gt_var.astype(np.int64)
-    H_gt, W_gt = gt.shape
-
-    # Find data variable whose spatial dimensions match GT
     data_var = None
     for k in data_keys:
         arr = np.array(data_mat[k])
-        if arr.ndim < 3:
-            continue
-
-        # Prefer (H, W, C) where first two dims match GT spatial dims
-        if (arr.shape[0] == H_gt and arr.shape[1] == W_gt) or \
-           (arr.shape[0] == W_gt and arr.shape[1] == H_gt):
+        if arr.ndim >= 3:
             data_var = arr
             break
-        # Try (C, H, W) where last two dims match GT spatial dims
-        if arr.ndim >= 3 and \
-           ((arr.shape[1] == H_gt and arr.shape[2] == W_gt) or
-            (arr.shape[1] == W_gt and arr.shape[2] == H_gt)):
-            # Transpose (C, H, W) -> (H, W, C)
-            data_var = arr.transpose(1, 2, 0)
-            break
-
     if data_var is None:
-        # Fallback: pick the largest 3D+ array and best-effort orient
         best = None
         best_size = 0
         for k in data_keys:
@@ -73,10 +112,76 @@ def load_hyperspectral_data(data_path, gt_path):
         data_var = best
 
     input_img = np.array(data_var)
+    if input_img.ndim == 2:
+        input_img = input_img[:, :, np.newaxis]
+    return input_img
+
+
+def _load_gt(gt_path):
+    """Load a .mat ground truth, returning (H, W) integer array."""
+    gt_mat = loadmat(gt_path)
+
+    def _is_variable(key):
+        return not key.startswith("__")
+
+    gt_keys = [k for k in gt_mat if _is_variable(k)]
+    gt_var = None
+    for k in gt_keys:
+        arr = np.array(gt_mat[k])
+        if arr.ndim == 2:
+            gt_var = arr
+            break
+    if gt_var is None:
+        raise ValueError(f"Could not find 2D ground truth array in {gt_path}")
+    return gt_var.astype(np.int64)
+
+
+def load_hyperspectral_data(data_path, gt_path):
+    """
+    Load hyperspectral image and ground truth from files.
+    Supports:
+      - data: .mat (auto-detect variable) or .dat (ENVI binary with sibling .hdr)
+      - gt:   .mat (auto-detect 2D variable)
+
+    Auto-detects data orientation by matching spatial dims to GT.
+
+    Returns:
+        input_img: (H, W, C) hyperspectral image array
+        gt:        (H, W) ground truth label array
+        num_classes: int
+    """
+    # Load GT
+    gt = _load_gt(gt_path)
+    H_gt, W_gt = gt.shape
+
+    # Load DATA
+    ext = os.path.splitext(data_path)[-1].lower()
+    if ext == '.dat':
+        input_img = _load_envi_dat(data_path)
+    elif ext == '.mat':
+        input_img = _load_mat(data_path)
+    else:
+        raise ValueError(f"Unsupported data file extension: {ext}. Use .mat or .dat")
 
     # Ensure data is (H, W, C)
     if input_img.ndim == 2:
         input_img = input_img[:, :, np.newaxis]
+
+    # If first two dims do NOT match GT spatial dims, try transposing (C, H, W) -> (H, W, C)
+    if input_img.ndim >= 3:
+        if input_img.shape[0] != H_gt or input_img.shape[1] != W_gt:
+            if input_img.shape[1] == H_gt and input_img.shape[2] == W_gt:
+                # (C, H, W) format
+                input_img = input_img.transpose(1, 2, 0)
+            elif input_img.shape[1] == W_gt and input_img.shape[2] == H_gt:
+                input_img = input_img.transpose(2, 1, 0)
+            else:
+                # Give up — just warn but keep as-is
+                import warnings
+                warnings.warn(
+                    f"Data spatial dims {input_img.shape[:2]} do not match GT dims {(H_gt, W_gt)}. "
+                    f"Data may be incorrectly oriented."
+                )
 
     num_classes = int(np.max(gt))
     if num_classes == 0:

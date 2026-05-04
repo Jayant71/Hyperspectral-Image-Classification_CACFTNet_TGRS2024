@@ -25,7 +25,16 @@ DOI: 10.1109/TGRS.2024.3374081
    datasets from EHU's Hyperspectral Remote Sensing Scenes if the .mat files are not found locally.
    Houston 2013 may require manual download due to access restrictions on the UH server.
 
-4. Plotting & visualization
+4. Custom dataset support
+   Supports arbitrary datasets with auto-detection of file formats.
+   Data can be .mat (MATLAB) or .dat + .hdr (ENVI binary). Ground truth can be .mat.
+   The --dataset argument accepts any name -- built-ins auto-resolve paths,
+   custom datasets require --data_path and --gt_path.
+   Model architecture auto-selects based on whether the band count is divisible by 8
+   (Pavia model adds zero-padding for non-divisible counts).
+   Use --model {auto,indian,pavia} to override.
+
+5. Plotting & visualization
    Added visualize.py -- a modular visualization module that produces:
    - RGB composite of the hyperspectral cube
    - Ground-truth label map
@@ -38,24 +47,26 @@ DOI: 10.1109/TGRS.2024.3374081
    - Per-class accuracy bar chart
    All figures are auto-saved to ./figures/<dataset>/. Use --no_plot to disable.
 
-5. New command-line arguments
-   --data_path            path to data .mat (auto-resolved by --dataset if empty)
-   --gt_path              path to ground-truth .mat (auto-resolved by --dataset if empty)
+6. New command-line arguments
+   --data_path            path to data file .mat or .dat (auto-resolved for built-ins)
+   --gt_path              path to ground-truth .mat (auto-resolved for built-ins)
+   --model                model architecture: auto, indian, or pavia
+   --rgb_bands            3 integers for RGB composite (e.g., 40 20 10)
    --split_mode {fixed,ratio}
    --train_samples        default 200
    --train_ratio          default 0.1
    --model_path           default ./log/model.pt
-   --output_dir           default ./figures  -- where visualization PNGs are saved
+   --output_dir           default ./figures
    --no_plot              disable all plotting
    --channels_band        auto-falls-back to number of bands if left at 0
 
-6. Added data_utils.py -- utility module for loading, normalization, mirroring, splitting, patch extraction.
+7. Added data_utils.py -- utility module for loading, normalization, mirroring, splitting, patch extraction.
 
-7. Added download_data.py -- standalone dataset downloader script.
+8. Added download_data.py -- standalone dataset downloader script.
 
-8. Added visualize.py -- modular plotting and visualization module.
+9. Added visualize.py -- modular plotting and visualization module.
 
-9. Added requirements.txt, pyproject.toml, and .gitignore for better project hygiene.
+10. Added requirements.txt, pyproject.toml, and .gitignore for better project hygiene.
 
 Everything else (network architecture, training loop, metrics) is unchanged from the original.
 
@@ -114,6 +125,33 @@ Place the .mat files in ./data/.
 
 - Indian Pines & Houston 2013 -> vit_pytorch_indian_Houston.py
 - Pavia University           -> vit_pytorch_pavia.py
+
+## Custom Datasets
+
+The code supports arbitrary datasets with auto-detection of file formats.
+
+Supported data formats:
+  .mat + .mat    Standard MATLAB format (auto-detects variable names by shape)
+  .dat + .hdr + .mat   ENVI binary cube + header; ground truth in .mat
+
+For ENVI .dat files, ensure the sibling .hdr header file exists in the same
+directory with the same base name (e.g., MyData.dat + MyData.hdr).
+
+Using a custom dataset:
+
+  # Custom dataset with .mat data + .mat GT
+  python demo.py --dataset MyData --data_path ./data/mydata.dat --gt_path ./data/mydata_gt.mat --epoches 500 --patches 7 --band_patches 1 --mode CAF --channels_band 0 --split_mode ratio --train_ratio 0.2 --model_path ./log/mydata.pt
+
+  # Custom dataset with ENVI .dat data + .mat GT
+  python demo.py --dataset MyData --data_path ./data/mydata.dat --gt_path ./data/mydata_gt.mat --epoches 500 --patches 7 --band_patches 1 --mode CAF --channels_band 0 --split_mode ratio --train_ratio 0.2 --model_path ./log/mydata.pt
+
+Model selection for custom datasets (--model):
+  auto    (default)  Auto-select: Pavia model if C % 8 != 0, else Indian/Houston
+  indian             Force Indian/Houston architecture (no padding)
+  pavia              Force Pavia architecture (zero-pads non-divisible-by-8 bands)
+
+Custom RGB bands for visualization:
+  python demo.py --dataset MyData ... --rgb_bands 40 20 10
 
 ## Visualization
 

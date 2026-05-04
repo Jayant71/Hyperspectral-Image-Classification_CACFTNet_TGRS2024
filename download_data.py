@@ -195,40 +195,41 @@ def ensure_dataset_available(dataset_name, data_dir="./data"):
         "Houston": ("Houston.mat", "Houston_gt.mat"),
     }
 
-    if dataset_name not in file_map:
-        raise ValueError("Unknown dataset: {}".format(dataset_name))
+    # For built-in datasets: auto-download if missing
+    if dataset_name in file_map:
+        data_fname, gt_fname = file_map[dataset_name]
+        data_path = os.path.join(data_dir, data_fname)
+        gt_path = os.path.join(data_dir, gt_fname)
 
-    data_fname, gt_fname = file_map[dataset_name]
-    data_path = os.path.join(data_dir, data_fname)
-    gt_path = os.path.join(data_dir, gt_fname)
+        if os.path.exists(data_path) and os.path.exists(gt_path):
+            return data_path, gt_path
 
-    if os.path.exists(data_path) and os.path.exists(gt_path):
+        missing = []
+        if not os.path.exists(data_path):
+            missing.append(data_fname)
+        if not os.path.exists(gt_path):
+            missing.append(gt_fname)
+
+        print("Missing files for {}: {}".format(dataset_name, ", ".join(missing)))
+        print("Attempting automatic download ...")
+        download_dataset(dataset_name, data_dir)
+
+        if not os.path.exists(data_path) or not os.path.exists(gt_path):
+            still_missing = []
+            if not os.path.exists(data_path):
+                still_missing.append(data_fname)
+            if not os.path.exists(gt_path):
+                still_missing.append(gt_fname)
+            raise FileNotFoundError(
+                "Could not obtain required files for {}: {}. "
+                "Please download them manually and place them in {}.".format(
+                    dataset_name, ", ".join(still_missing), data_dir
+                )
+            )
         return data_path, gt_path
 
-    missing = []
-    if not os.path.exists(data_path):
-        missing.append(data_fname)
-    if not os.path.exists(gt_path):
-        missing.append(gt_fname)
-
-    print("Missing files for {}: {}".format(dataset_name, ", ".join(missing)))
-    print("Attempting automatic download ...")
-    download_dataset(dataset_name, data_dir)
-
-    if not os.path.exists(data_path) or not os.path.exists(gt_path):
-        still_missing = []
-        if not os.path.exists(data_path):
-            still_missing.append(data_fname)
-        if not os.path.exists(gt_path):
-            still_missing.append(gt_fname)
-        raise FileNotFoundError(
-            "Could not obtain required files for {}: {}. "
-            "Please download them manually and place them in {}.".format(
-                dataset_name, ", ".join(still_missing), data_dir
-            )
-        )
-
-    return data_path, gt_path
+    # For custom datasets: just return the paths as-is (caller must verify existence)
+    return None, None
 
 
 if __name__ == "__main__":

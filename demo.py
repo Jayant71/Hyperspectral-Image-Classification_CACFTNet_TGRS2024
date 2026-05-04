@@ -27,11 +27,41 @@ from visualize import (
 )
 
 # -------------------------------------------------------------------------------
+# Known built-in datasets
+BUILTIN_DATASETS = {
+    'Indian': ('./data/Indian_pines_corrected.mat', './data/Indian_pines_gt.mat'),
+    'Pavia':  ('./data/PaviaU.mat', './data/PaviaU_gt.mat'),
+    'Houston':('./data/Houston.mat', './data/Houston_gt.mat'),
+}
+
+BUILTIN_RGB_BANDS = {
+    'Indian':  (60, 30, 10),
+    'Pavia':   (50, 30, 10),
+    'Houston': (40, 20, 5),
+}
+
+# -------------------------------------------------------------------------------
 # Argument parser
 parser = argparse.ArgumentParser("HSI")
-parser.add_argument('--dataset', choices=['Indian', 'Pavia', 'Houston'], default='Indian', help='dataset name for color map')
-parser.add_argument('--data_path', type=str, default='', help='path to data .mat file (auto-resolved by --dataset if empty)')
-parser.add_argument('--gt_path', type=str, default='', help='path to ground-truth .mat file (auto-resolved by --dataset if empty)')
+parser.add_argument('--dataset', type=str, default='Custom',
+                    help='Dataset name (used for figure subfolder naming). '
+                         'Built-ins: Indian, Pavia, Houston. '
+                         'Any other name triggers custom-dataset mode.')
+parser.add_argument('--data_path', type=str, default='',
+                    help='Path to data .mat file. Required for custom datasets. '
+                         'Auto-resolved for built-in datasets.')
+parser.add_argument('--gt_path', type=str, default='',
+                    help='Path to ground-truth .mat file. Required for custom datasets. '
+                         'Auto-resolved for built-in datasets.')
+parser.add_argument('--model', choices=['auto', 'indian', 'pavia'], default='auto',
+                    help='Which model architecture to load. '
+                         '"auto" picks based on band count (pavia for C%8!=0, else indian). '
+                         '"indian" -> vit_pytorch_indian_Houston.py. '
+                         '"pavia"  -> vit_pytorch_pavia.py.')
+parser.add_argument('--rgb_bands', type=int, nargs=3, default=None,
+                    help='Three band indices for RGB composite visualization. '
+                         'Defaults: Indian=(60,30,10), Pavia=(50,30,10), Houston=(40,20,5). '
+                         'For custom datasets defaults to (C//3, C//5, C//10).')
 parser.add_argument('--flag_test', choices=['test', 'train'], default='train', help='testing mark')
 parser.add_argument('--mode', choices=['ViT', 'CAF'], default='ViT', help='mode choice')
 parser.add_argument('--gpu_id', default='0', help='gpu id')
@@ -54,11 +84,49 @@ parser.add_argument('--no_plot', action='store_true', help='disable all plotting
 args = parser.parse_args()
 
 # -------------------------------------------------------------------------------
+# Resolve data / gt paths
+is_builtin = args.dataset in BUILTIN_DATASETS
+
+if not args.data_path or not args.gt_path:
+    if is_builtin:
+        args.data_path, args.gt_path = BUILTIN_DATASETS[args.dataset]
+    else:
+        raise ValueError(
+            f"Custom dataset '{args.dataset}': --data_path and --gt_path are required.\n"
+            f"Example: python demo.py --dataset MyData --data_path ./data/mydata.mat --gt_path ./data/mydata_gt.mat"
+        )
+
+# Auto-download for built-ins; for custom datasets just verify files exist
+if is_builtin:
+    args.data_path, args.gt_path = ensure_dataset_available(
+        args.dataset, data_dir=os.path.dirname(args.data_path) or './data'
+    )
+else:
+    if not os.path.exists(args.data_path):
+        raise FileNotFoundError(f"Data file not found: {args.data_path}")
+    if not os.path.exists(args.gt_path):
+        raise FileNotFoundError(f"GT file not found: {args.gt_path}")
+
+# -------------------------------------------------------------------------------
 # import the correct ViT model
-if args.dataset == 'Pavia':
+if args.model == 'auto':
+    # We need band count to decide; load data first then decide
+    _tmp_img, _tmp_gt, _ = load_hyperspectral_data(args.data_path, args.gt_path)
+    _, _, _bands = _tmp_img.shape
+    # Pavia model adds a zero-padding channel for non-divisible-by-8 band counts
+    if _bands % 8 != 0:
+        from vit_pytorch_pavia import ViT
+        print(f"[Auto model] {_bands} bands -> using Pavia model (pad to divisible-by-8)")
+    else:
+        from vit_pytorch_indian_Houston import ViT
+        print(f"[Auto model] {_bands} bands -> using Indian/Houston model")
+    del _tmp_img, _tmp_gt
+elif args.model == 'pavia':
     from vit_pytorch_pavia import ViT
+    print("[Manual model] Using Pavia model")
 else:
     from vit_pytorch_indian_Houston import ViT
+    print("[Manual model] Using Indian/Houston model")
 
 os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
 
@@ -178,20 +246,6 @@ cudnn.deterministic = True
 cudnn.benchmark = False
 
 # -------------------------------------------------------------------------------
-# Auto-resolve data/gt paths from dataset name if not provided
-DATASET_FILES = {
-    'Indian': ('./data/Indian_pines_corrected.mat', './data/Indian_pines_gt.mat'),
-    'Pavia': ('./data/PaviaU.mat', './data/PaviaU_gt.mat'),
-    'Houston': ('./data/Houston.mat', './data/Houston_gt.mat'),
-}
-
-if not args.data_path or not args.gt_path:
-    args.data_path, args.gt_path = DATASET_FILES[args.dataset]
-
-# Auto-download data files if they don't exist yet
-args.data_path, args.gt_path = ensure_dataset_available(args.dataset, data_dir=os.path.dirname(args.data_path) or './data')
-
-# -------------------------------------------------------------------------------
 # Load data from separate .mat files
 print("Loading data from:", args.data_path)
 print("Loading gt from:", args.gt_path)
@@ -221,10 +275,13 @@ if not args.no_plot:
     fig_dir = os.path.join(args.output_dir, args.dataset)
     os.makedirs(fig_dir, exist_ok=True)
 
-    # RGB composite (pick reasonable bands depending on dataset)
-    rgb_bands = {'Indian': (60, 30, 10), 'Pavia': (50, 30, 10), 'Houston': (40, 20, 5)}
+    # Resolve RGB bands
+    if args.rgb_bands is not None:
+        rgb_bands = tuple(args.rgb_bands)
+    else:
+        rgb_bands = BUILTIN_RGB_BANDS.get(args.dataset, (band // 3, band // 5, band // 10))
     plot_rgb_composite(input_normalize,
-                       bands=rgb_bands.get(args.dataset, (60, 30, 10)),
+                       bands=rgb_bands,
                        title=f"{args.dataset} RGB Composite",
                        save_path=os.path.join(fig_dir, "rgb_composite.png"))
 

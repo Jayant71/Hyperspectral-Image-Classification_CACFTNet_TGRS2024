@@ -153,13 +153,19 @@ def cal_results(matrix):
     sum_ = 0
     AA = np.zeros([shape[0]], dtype=float)
     for i in range(shape[0]):
+        row_sum = np.sum(matrix[i, :])
         number += matrix[i, i]
-        AA[i] = matrix[i, i] / np.sum(matrix[i, :])
-        sum_ += np.sum(matrix[i, :]) * np.sum(matrix[:, i])
-    OA = number / np.sum(matrix)
-    AA_mean = np.mean(AA)
-    pe = sum_ / (np.sum(matrix) ** 2)
-    Kappa = (OA - pe) / (1 - pe)
+        if row_sum > 0:
+            AA[i] = matrix[i, i] / row_sum
+        else:
+            AA[i] = 0.0
+        sum_ += row_sum * np.sum(matrix[:, i])
+    total = np.sum(matrix)
+    OA = number / total if total > 0 else 0.0
+    nonzero_AA = AA[AA > 0]
+    AA_mean = np.mean(nonzero_AA) if len(nonzero_AA) > 0 else 0.0
+    pe = sum_ / (total ** 2) if total > 0 else 0.0
+    Kappa = (OA - pe) / (1 - pe) if (1 - pe) > 0 else 0.0
     return OA, AA_mean, Kappa, AA
 
 # -------------------------------------------------------------------------------

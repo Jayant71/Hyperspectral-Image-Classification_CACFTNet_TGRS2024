@@ -230,7 +230,7 @@ def plot_training_curves(train_losses, train_accs, test_accs=None,
     ax2.grid(True, alpha=0.3)
 
     fig.suptitle(title)
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -313,7 +313,7 @@ def plot_gt_vs_prediction(gt, prediction, num_classes, colormap=None,
     cbar.ax.set_yticklabels(["BG"] + [str(i) for i in range(1, num_classes + 1)])
 
     fig.suptitle(title)
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)

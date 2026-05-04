@@ -157,9 +157,13 @@ def split_train_test(gt, mode="fixed", train_samples=None, train_ratio=None, see
         indices = np.random.permutation(n_total)
 
         if mode == "fixed":
-            n_train = min(train_samples, n_total)
+            n_train = min(train_samples, n_total - 1)
+            if n_train < 1:
+                n_train = 1
         elif mode == "ratio":
             n_train = max(1, int(np.floor(n_total * train_ratio)))
+            if n_train >= n_total:
+                n_train = max(1, n_total - 1)
         else:
             raise ValueError(f"Unknown split mode: {mode}")
 

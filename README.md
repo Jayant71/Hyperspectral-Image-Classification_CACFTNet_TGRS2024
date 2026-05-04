@@ -20,20 +20,38 @@ This repository is a **fork** of the original [CACFTNet](https://github.com/CCRG
 3. **Automatic dataset download**  
    Running `demo.py` or `download_data.py` will automatically download Indian Pines and Pavia University datasets from [EHU's Hyperspectral Remote Sensing Scenes](https://www.ehu.eus/ccwintco/index.php/Hyperspectral_Remote_Sensing_Scenes) if the `.mat` files are not found locally. Houston 2013 may require manual download due to access restrictions on the UH server.
 
-4. **New command-line arguments**
+4. **Plotting & visualization**  
+   Added `visualize.py` — a modular visualization module that produces:
+   - **RGB composite** of the hyperspectral cube
+   - **Ground-truth** label map
+   - **Class distribution** bar chart (train/test split)
+   - **Mean spectral signatures** per class
+   - **Training curves** (loss + accuracy over epochs)
+   - **Prediction map** after inference
+   - **Side-by-side ground-truth vs prediction**
+   - **Confusion matrix** heatmap
+   - **Per-class accuracy** bar chart
+   
+   All figures are auto-saved to `./figures/<dataset>/`. Use `--no_plot` to disable.
+
+5. **New command-line arguments**
    - `--data_path` — path to the hyperspectral data `.mat` (auto-resolved by `--dataset` if empty)
    - `--gt_path` — path to the ground-truth `.mat` (auto-resolved by `--dataset` if empty)
    - `--split_mode {fixed,ratio}`
    - `--train_samples` (default `200`)
    - `--train_ratio` (default `0.1`)
    - `--model_path` (default `./log/model.pt`) — configurable save/load path
+   - `--output_dir` (default `./figures`) — where visualization PNGs are saved
+   - `--no_plot` — disable all plotting
    - `--channels_band` now auto-falls-back to the number of bands if left at `0`
 
-5. **Added `data_utils.py`** — a clean utility module that handles loading, normalization, mirroring, splitting, and patch extraction.
+6. **Added `data_utils.py`** — a clean utility module that handles loading, normalization, mirroring, splitting, and patch extraction.
 
-6. **Added `download_data.py`** — a standalone dataset downloader script.
+7. **Added `download_data.py`** — a standalone dataset downloader script.
 
-7. **Added `requirements.txt` and `.gitignore`** for better project hygiene.
+8. **Added `visualize.py`** — a modular plotting and visualization module.
+
+9. **Added `requirements.txt`, `pyproject.toml`, and `.gitignore`** for better project hygiene.
 
 Everything else (network architecture, training loop, metrics) is **unchanged** from the original.
 
@@ -41,16 +59,25 @@ Everything else (network architecture, training loop, metrics) is **unchanged** 
 
 ## Requirements
 
-Install dependencies:
+### 1. Install PyTorch with CUDA 12.6
+
+```bash
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu126
+```
+
+### 2. Install remaining dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-- PyTorch 1.6+  
-- CUDA 10.1+ (optional)  
-- Python 3.7+  
-- `einops`, `scipy`, `scikit-learn`, `matplotlib`, `numpy`
+Or using `pyproject.toml` (with [uv](https://github.com/astral-sh/uv) or `pip`):
+
+```bash
+pip install -e ".[cuda126] --index-url https://download.pytorch.org/whl/cu126"
+```
+
+Dependencies: `einops`, `scipy`, `scikit-learn`, `matplotlib`, `seaborn`, `numpy`
 
 ## Dataset
 
@@ -101,6 +128,24 @@ Place the `.mat` files in `./data/`.
 - **Indian Pines & Houston 2013** → `vit_pytorch_indian_Houston.py`
 - **Pavia University** → `vit_pytorch_pavia.py`
 
+## Visualization
+
+All visualizations are generated automatically and saved as PNGs under `./figures/<dataset>/`:
+
+| Figure | When generated | File |
+|--------|---------------|------|
+| RGB composite | Before training | `rgb_composite.png` |
+| Ground-truth map | Before training | `ground_truth.png` |
+| Class distribution | Before training | `class_distribution.png` |
+| Spectral signatures | Before training | `spectral_signatures.png` |
+| Training curves | After training | `training_curves.png` |
+| Prediction map | After training / test | `prediction_map.png` |
+| GT vs Prediction | After training / test | `gt_vs_prediction.png` |
+| Confusion matrix | After training / test | `confusion_matrix.png` |
+| Per-class accuracy | After training / test | `per_class_accuracy.png` |
+
+Use `--no_plot` to skip all visualization, or `--output_dir` to change the save directory.
+
 ## Usage
 
 When `--data_path` and `--gt_path` are omitted, they are auto-resolved from `--dataset` and missing files are downloaded automatically.
@@ -135,6 +180,24 @@ python demo.py --dataset Pavia --flag_test test --patches 7 --band_patches 1 --m
 
 # Houston
 python demo.py --dataset Houston --flag_test test --patches 7 --band_patches 1 --mode CAF --channels_band 144 --model_path ./log/Houston.pt
+```
+
+## Project Structure
+
+```
+.
+├── demo.py                          # Main training/testing entry point
+├── data_utils.py                    # Data loading, splitting, patch extraction
+├── download_data.py                 # Automatic dataset downloader
+├── visualize.py                     # Plotting & visualization module
+├── vit_pytorch_indian_Houston.py    # CACFTNet model (Indian Pines, Houston)
+├── vit_pytorch_pavia.py            # CACFTNet model (Pavia University)
+├── requirements.txt                 # Python dependencies
+├── pyproject.toml                   # Project metadata
+├── .gitignore
+├── README.md
+├── README.txt
+└── data/                            # Dataset .mat files (auto-downloaded)
 ```
 
 ## Citation

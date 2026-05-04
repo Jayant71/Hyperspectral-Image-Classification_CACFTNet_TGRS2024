@@ -18,6 +18,13 @@ from data_utils import (
     train_and_test_data, train_and_test_label
 )
 from download_data import ensure_dataset_available
+from visualize import (
+    plot_rgb_composite, plot_gt_map, plot_class_distribution,
+    plot_band_spectra, plot_training_curves,
+    plot_prediction_map, plot_gt_vs_prediction,
+    plot_confusion_matrix, plot_per_class_accuracy,
+    save_all_figures, _load_colormap
+)
 
 # -------------------------------------------------------------------------------
 # Argument parser
@@ -38,12 +45,12 @@ parser.add_argument('--learning_rate', type=float, default=5e-4, help='learning 
 parser.add_argument('--gamma', type=float, default=0.9, help='lr scheduler gamma')
 parser.add_argument('--weight_decay', type=float, default=0, help='weight decay')
 parser.add_argument('--channels_band', type=int, default=0, help='channels band')
-# new: train/test split options
 parser.add_argument('--split_mode', choices=['fixed', 'ratio'], default='fixed', help='how to split train/test')
 parser.add_argument('--train_samples', type=int, default=200, help='samples per class for fixed split')
 parser.add_argument('--train_ratio', type=float, default=0.1, help='train ratio for ratio split')
-# new: save/load model path
 parser.add_argument('--model_path', type=str, default='./log/model.pt', help='path to save/load model')
+parser.add_argument('--output_dir', type=str, default='./figures', help='directory to save visualization figures')
+parser.add_argument('--no_plot', action='store_true', help='disable all plotting/visualization')
 args = parser.parse_args()
 
 # -------------------------------------------------------------------------------
@@ -165,7 +172,6 @@ cudnn.deterministic = True
 cudnn.benchmark = False
 
 # -------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------
 # Auto-resolve data/gt paths from dataset name if not provided
 DATASET_FILES = {
     'Indian': ('./data/Indian_pines_corrected.mat', './data/Indian_pines_gt.mat'),
@@ -199,23 +205,36 @@ elif args.split_mode == 'ratio':
 label = gt
 
 # -------------------------------------------------------------------------------
-# Color map (try to load a dataset-specific one, fall back to AVIRIS colormap)
-color_mat_path = './data/AVIRIS_colormap.mat'
-if os.path.exists(color_mat_path):
-    color_mat = loadmat(color_mat_path)
-    color_mat_list = list(color_mat)
-    # pick the first variable that is a numpy array of shape (N, 3)
-    color_matrix = None
-    for k in color_mat_list:
-        arr = color_mat[k]
-        if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[1] == 3:
-            color_matrix = arr
-            break
-    if color_matrix is None:
-        color_matrix = np.random.rand(num_classes + 1, 3)
-else:
-    print("Warning: color map file not found at", color_mat_path)
-    color_matrix = np.random.rand(num_classes + 1, 3)
+# Colormap
+color_matrix = _load_colormap('./data/AVIRIS_colormap.mat', num_classes)
+
+# -------------------------------------------------------------------------------
+# Dataset visualizations (before training)
+if not args.no_plot:
+    print("Generating dataset visualizations ...")
+    fig_dir = os.path.join(args.output_dir, args.dataset)
+    os.makedirs(fig_dir, exist_ok=True)
+
+    # RGB composite (pick reasonable bands depending on dataset)
+    rgb_bands = {'Indian': (60, 30, 10), 'Pavia': (50, 30, 10), 'Houston': (40, 20, 5)}
+    plot_rgb_composite(input_normalize,
+                       bands=rgb_bands.get(args.dataset, (60, 30, 10)),
+                       title=f"{args.dataset} RGB Composite",
+                       save_path=os.path.join(fig_dir, "rgb_composite.png"))
+
+    plot_gt_map(gt, num_classes, colormap=color_matrix,
+                title=f"{args.dataset} Ground Truth",
+                save_path=os.path.join(fig_dir, "ground_truth.png"))
+
+    plot_class_distribution(gt, TR, TE, num_classes,
+                            title=f"{args.dataset} Class Distribution (Train/Test)",
+                            save_path=os.path.join(fig_dir, "class_distribution.png"))
+
+    plot_band_spectra(input_normalize, gt, num_classes,
+                       title=f"{args.dataset} Mean Spectral Signatures",
+                       save_path=os.path.join(fig_dir, "spectral_signatures.png"))
+
+    print("Dataset visualizations saved to:", fig_dir)
 
 # -------------------------------------------------------------------------------
 # Extract patches
@@ -285,24 +304,51 @@ if args.flag_test == 'test':
     prediction_matrix = np.zeros((height, width), dtype=float)
     for i in range(total_pos_true.shape[0]):
         prediction_matrix[total_pos_true[i, 0], total_pos_true[i, 1]] = pre_u[i] + 1
-    plt.subplot(1, 1, 1)
-    plt.imshow(prediction_matrix, colors.ListedColormap(color_matrix))
-    plt.xticks([])
-    plt.yticks([])
-    plt.show()
+
     savemat('matrix.mat', {'P': prediction_matrix, 'label': label})
+
+    # Evaluation visualizations
+    if not args.no_plot:
+        fig_dir = os.path.join(args.output_dir, args.dataset)
+        os.makedirs(fig_dir, exist_ok=True)
+
+        plot_prediction_map(prediction_matrix, gt, num_classes, colormap=color_matrix,
+                            title=f"{args.dataset} Prediction (OA={OA2:.4f})",
+                            save_path=os.path.join(fig_dir, "prediction_map.png"))
+
+        plot_gt_vs_prediction(gt, prediction_matrix, num_classes, colormap=color_matrix,
+                               title=f"{args.dataset} Ground Truth vs Prediction",
+                               save_path=os.path.join(fig_dir, "gt_vs_prediction.png"))
+
+        plot_confusion_matrix(tar_v, pre_v, num_classes,
+                               title=f"{args.dataset} Confusion Matrix",
+                               save_path=os.path.join(fig_dir, "confusion_matrix.png"))
+
+        plot_per_class_accuracy(tar_v, pre_v, num_classes,
+                                 title=f"{args.dataset} Per-Class Accuracy",
+                                 save_path=os.path.join(fig_dir, "per_class_accuracy.png"))
+
+        print("Evaluation visualizations saved to:", fig_dir)
 
 elif args.flag_test == 'train':
     print("start training")
     tic = time.time()
     best_acc = 0.0
     os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
+
+    train_losses = []
+    train_accs = []
+    test_accs = []
+
     for epoch in range(args.epoches):
         model.train()
         train_acc, train_obj, tar_t, pre_t = train_epoch(model, label_train_loader, criterion, optimizer)
         OA1, AA_mean1, Kappa1, AA1 = output_metric(tar_t, pre_t)
         print("Epoch: {:03d} train_loss: {:.4f} train_acc: {:.4f}"
               .format(epoch + 1, train_obj, train_acc))
+
+        train_losses.append(float(train_obj))
+        train_accs.append(float(train_acc))
 
         if (epoch % args.test_freq == 0) or (epoch == args.epoches - 1):
             model.eval()
@@ -312,11 +358,53 @@ elif args.flag_test == 'train':
                 best_acc = OA2
                 torch.save(model.state_dict(), args.model_path)
             print("Epoch: {:03d} test_acc: {:.4f}".format(epoch + 1, OA2))
+            test_accs.append(float(OA2))
+        else:
+            test_accs.append(float('nan'))
+
         scheduler.step()
 
     toc = time.time()
     print("Running Time: {:.2f}".format(toc - tic))
     print("**************************************************")
+
+    # Training visualizations
+    if not args.no_plot:
+        fig_dir = os.path.join(args.output_dir, args.dataset)
+        os.makedirs(fig_dir, exist_ok=True)
+
+        plot_training_curves(train_losses, train_accs, test_accs,
+                              title=f"{args.dataset} Training Curves",
+                              save_path=os.path.join(fig_dir, "training_curves.png"))
+
+        # Final evaluation on test set with best model
+        model.load_state_dict(torch.load(args.model_path))
+        model.eval()
+        tar_v, pre_v = valid_epoch(model, label_test_loader, criterion, optimizer)
+        OA2, AA_mean2, Kappa2, AA2 = output_metric(tar_v, pre_v)
+
+        pre_u = test_epoch(model, label_true_loader, criterion, optimizer)
+        prediction_matrix = np.zeros((height, width), dtype=float)
+        for i in range(total_pos_true.shape[0]):
+            prediction_matrix[total_pos_true[i, 0], total_pos_true[i, 1]] = pre_u[i] + 1
+
+        plot_prediction_map(prediction_matrix, gt, num_classes, colormap=color_matrix,
+                            title=f"{args.dataset} Prediction (OA={OA2:.4f})",
+                            save_path=os.path.join(fig_dir, "prediction_map.png"))
+
+        plot_gt_vs_prediction(gt, prediction_matrix, num_classes, colormap=color_matrix,
+                               title=f"{args.dataset} Ground Truth vs Prediction",
+                               save_path=os.path.join(fig_dir, "gt_vs_prediction.png"))
+
+        plot_confusion_matrix(tar_v, pre_v, num_classes,
+                               title=f"{args.dataset} Confusion Matrix",
+                               save_path=os.path.join(fig_dir, "confusion_matrix.png"))
+
+        plot_per_class_accuracy(tar_v, pre_v, num_classes,
+                                 title=f"{args.dataset} Per-Class Accuracy",
+                                 save_path=os.path.join(fig_dir, "per_class_accuracy.png"))
+
+        print("Training & evaluation visualizations saved to:", fig_dir)
 
 # -------------------------------------------------------------------------------
 # Final output
